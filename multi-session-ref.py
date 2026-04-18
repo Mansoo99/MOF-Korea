@@ -24,7 +24,6 @@ from supabase import Client, create_client
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _ENV_PATH = _REPO_ROOT / ".env"
-_LOG_DIR = _REPO_ROOT / "logs"
 _LOGO_PATH = _REPO_ROOT / "logo.png"
 
 _ENV_KEYS = ("OPENAI_API_KEY", "SUPABASE_URL", "SUPABASE_ANON_KEY")
@@ -82,24 +81,45 @@ ANSWER_SYSTEM = (
 )
 
 
+def _ensure_writable_log_dir() -> Path | None:
+    """Streamlit Cloud 등 읽기 전용 마운트에서는 repo/logs 생성이 실패하므로 임시 경로로 폴백."""
+    candidates = (
+        _REPO_ROOT / "logs",
+        Path(tempfile.gettempdir()) / "multi_session_rag_logs",
+    )
+    for d in candidates:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+        except OSError:
+            continue
+    return None
+
+
 def _configure_logging() -> None:
     global _logging_done
     if _logging_done:
         return
-    _LOG_DIR.mkdir(parents=True, exist_ok=True)
     day = datetime.now().strftime("%Y%m%d")
-    log_path = _LOG_DIR / f"multi_session_rag_{day}.log"
     _logger.handlers.clear()
     _logger.setLevel(logging.WARNING)
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    fh = logging.FileHandler(log_path, encoding="utf-8")
-    fh.setLevel(logging.WARNING)
-    fh.setFormatter(fmt)
     ch = logging.StreamHandler()
     ch.setLevel(logging.WARNING)
     ch.setFormatter(fmt)
-    _logger.addHandler(fh)
     _logger.addHandler(ch)
+    log_dir = _ensure_writable_log_dir()
+    if log_dir is not None:
+        try:
+            fh = logging.FileHandler(
+                log_dir / f"multi_session_rag_{day}.log",
+                encoding="utf-8",
+            )
+            fh.setLevel(logging.WARNING)
+            fh.setFormatter(fmt)
+            _logger.addHandler(fh)
+        except OSError:
+            pass
     _logger.propagate = False
     for name in ("httpx", "httpcore", "urllib3"):
         logging.getLogger(name).setLevel(logging.WARNING)
